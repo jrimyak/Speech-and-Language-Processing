@@ -2,7 +2,7 @@
 
 from sentiment_data import *
 from utils import *
-
+from collections import Counter
 
 class FeatureExtractor(object):
     """
@@ -28,9 +28,33 @@ class UnigramFeatureExtractor(FeatureExtractor):
     and any additional preprocessing you want to do.
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer 
+        self.counts = Counter()
+        # raise Exception("Must be implemented")
 
+    def get_indexer(self):
+        return self.indexer
 
+    def add_feats(self, word_list: List[str]):
+        # remove stop words 
+        for word in word_list:
+            word.lower()
+            # check to see if its in stops words 
+            self.indexer.add_and_get_index(word)
+    
+    def extract(self, ex_words: List[str], add_to_index: bool=False) -> List[Int]:
+        if add_to_index:
+            self.add_feats(ex_words)
+        
+        c = Counter()
+        for word in ex_words:
+            word.lower()
+            if self.indexer.contains(word):
+                k = self.indexer.index_of(word)
+                c.update([k])
+        
+        return list(c.items())
+    
 class BigramFeatureExtractor(FeatureExtractor):
     """
     Bigram feature extractor analogous to the unigram one.
