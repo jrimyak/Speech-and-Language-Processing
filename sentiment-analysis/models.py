@@ -66,7 +66,28 @@ class BigramFeatureExtractor(FeatureExtractor):
     """
 
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+
+    def get_indexer(self):
+        return self.indexer
+
+    def add_feats(self, ex_words: List[str]):
+        for i in range(len(ex_words)-1):
+            word_pair = ex_words[i] + ex_words[i+1]
+            self.indexer.add_and_get_index(word_pair)
+   #     raise Exception("Must be implemented")
+
+    def extract_features(self, ex_words: List, add_to_index: bool = False) -> List[int]:
+        if add_to_index:
+            self.add_feats(ex_words)
+
+        c = Counter()
+        for i in range(len(ex_words)-1):
+            word_pair = ex_words[i] + ex_words[i+1]
+            if self.indexer.contains(word_pair):
+                k = self.indexer.index_of(word_pair)
+                c.update([k])
+        return list(c.items())
 
 
 class BetterFeatureExtractor(FeatureExtractor):
