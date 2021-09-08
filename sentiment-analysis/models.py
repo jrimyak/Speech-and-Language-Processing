@@ -5,7 +5,9 @@ from utils import *
 import numpy as np
 import random
 from collections import Counter
+from nltk.corpus import stopwords
 
+stop_words = set(stopwords.words('english'))
 
 class FeatureExtractor(object):
     """
@@ -34,8 +36,6 @@ class UnigramFeatureExtractor(FeatureExtractor):
 
     def __init__(self, indexer: Indexer):
         self.indexer = indexer
-        self.counts = {}
-        # raise Exception("Must be implemented")
 
     def get_indexer(self):
         return self.indexer
@@ -45,12 +45,10 @@ class UnigramFeatureExtractor(FeatureExtractor):
         for word in word_list:
             word.lower()
             # check to see if its in stops words
-            self.indexer.add_and_get_index(word)
+            if word not in stop_words:
+                self.indexer.add_and_get_index(word)
 
     def extract_features(self, ex_words: List[str], add_to_index: bool = False) -> List[int]:
-        if add_to_index:
-            self.add_feats(ex_words)
-
         c = Counter()
         for word in ex_words:
             word.lower()
@@ -73,17 +71,14 @@ class BigramFeatureExtractor(FeatureExtractor):
 
     def add_feats(self, ex_words: List[str]):
         for i in range(len(ex_words)-1):
-            word_pair = ex_words[i] + ex_words[i+1]
+            # remove stop works 
+            word_pair = ex_words[i].lower() + ex_words[i+1].lower()
             self.indexer.add_and_get_index(word_pair)
-   #     raise Exception("Must be implemented")
 
-    def extract_features(self, ex_words: List, add_to_index: bool = False) -> List[int]:
-        if add_to_index:
-            self.add_feats(ex_words)
-
+    def extract_features(self, ex_words: List) -> List[int]:
         c = Counter()
         for i in range(len(ex_words)-1):
-            word_pair = ex_words[i] + ex_words[i+1]
+            word_pair = ex_words[i].lower() + ex_words[i+1].lower()
             if self.indexer.contains(word_pair):
                 k = self.indexer.index_of(word_pair)
                 c.update([k])
@@ -143,10 +138,8 @@ class LogisticRegressionClassifier(SentimentClassifier):
         SentimentClassifier.__init__(self)
         self.feature_extractor = feature_extractor
         self.indexer = self.feature_extractor.get_indexer()
-        self.indexer_length = self.indexer.__len__()
-        self.weights = np.zeros((self.indexer_length,))
+        self.weights = np.zeros((self.indexer.__len__(),))
         self.features = {}
-#        raise Exception("Must be implemented")
 
     def get_feats(self, ex_words: List[str]) -> List[int]:
         sent = ''.join(ex_words)
@@ -158,14 +151,14 @@ class LogisticRegressionClassifier(SentimentClassifier):
         return f_x
 
     def sigmoid(self, x):
-        output = 1./(1. + np.exp(-x))
-        output = max(output, 1e-8)
-        output = min(output, 1-1e-8)
+        output = 1/(1 + np.exp(-x))
+        # output = max(output, 1e-8)
+        # output = min(output, 1-1e-8)
         return output
 
     def predict(self, ex_words: List[str]) -> int:
         f_x = self.get_feats(ex_words)
-        wfx = 0.
+        wfx = 0
 
         for k, v in f_x:
             wfx += self.weights[k] * v
@@ -177,13 +170,20 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
     def update(self, ex_words: List, y, y_pred, alpha):
         f_x = self.get_feats(ex_words)
-        wfx = 0.
+        wfx = 0
         for k, v in f_x:
             wfx += self.weights[k] * v
-        p = self.sigmoid(wfx)
-        for key, val in f_x:
+        prob = self.sigmoid(wfx)
+        '''
+        update rules: write about tomoorow 
+        p = log(ex/(1+ex))
+        dp/dx = 1 - ex/(1+ex) = 1/(1+ex)
+        loss = -y * log(p) - (1-y) * log(1-p)
+        d(loss)/dw = -y * fx *(1-p) + (1-y) * fx*p
+        '''
+        for key, x_j in f_x:
             self.weights[key] = self.weights[key] - \
-                alpha * (-y*val*(1-p)+(1-y)*val*p)
+                alpha * ( (prob - y) * x_j)
 
     def get_loss(self, train_exs):
         loss_sum = 0
@@ -192,7 +192,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
             x = ex.words
             f_x = self.get_feats(x)
 
-            wfx = 0.
+            wfx = 0
 
             for k, v in f_x:
                 wfx += self.weights[k] * v
@@ -231,8 +231,8 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     alpha = 0.5
     for t in range(epochs):
         random.shuffle(train_exs)
-        sample_size = int((len(train_exs)))
-        sampled_exs = train_exs[:sample_size]
+        # sample_size = len(train_exs)
+        sampled_exs = train_exs[:len(train_exs)]
 
         for ex in sampled_exs:
             y = ex.label
