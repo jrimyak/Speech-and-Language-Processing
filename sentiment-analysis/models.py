@@ -6,7 +6,10 @@ import numpy as np
 import random
 from collections import Counter
 from nltk.corpus import stopwords
+import string
+import matplotlib.pyplot as plt
 
+# getting stopwords from nltk
 stop_words = set(stopwords.words('english'))
 
 class FeatureExtractor(object):
@@ -40,18 +43,17 @@ class UnigramFeatureExtractor(FeatureExtractor):
     def get_indexer(self):
         return self.indexer
 
-    def add_feats(self, word_list: List[str]):
-        # remove stop words
-        for word in word_list:
-            word.lower()
-            # check to see if its in stops words
-            if word not in stop_words:
-                self.indexer.add_and_get_index(word)
+    def add_feats(self, list_of_words: List[str]):
+        for word in list_of_words:
+            # check to see if its not in stops words then add to indexer 
+            if word.lower() not in stop_words:
+                self.indexer.add_and_get_index(word.lower())
 
     def extract_features(self, ex_words: List[str], add_to_index: bool = False) -> List[int]:
-        c = Counter()
-        for word in ex_words:
-            word.lower()
+        c = Counter() # counter to store sparse vector 
+        for ex_word in ex_words:
+            word = ex_word.lower()
+            # adding one if the corresponding index is in the list 
             if self.indexer.contains(word):
                 k = self.indexer.index_of(word)
                 c.update([k])
@@ -69,16 +71,17 @@ class BigramFeatureExtractor(FeatureExtractor):
     def get_indexer(self):
         return self.indexer
 
-    def add_feats(self, ex_words: List[str]):
-        for i in range(len(ex_words)-1):
-            # remove stop works 
-            word_pair = ex_words[i].lower() + ex_words[i+1].lower()
+    def add_feats(self, list_of_words: List[str]):
+        for i in range(len(list_of_words)-1):
+            # bigram is two adjacent wordds then add to the indexer
+            word_pair = list_of_words[i].lower() + list_of_words[i+1].lower()
             self.indexer.add_and_get_index(word_pair)
 
-    def extract_features(self, ex_words: List) -> List[int]:
-        c = Counter()
+    def extract_features(self, ex_words: List, add_to_index: bool = False) -> List[int]:
+        c = Counter() # counter for the sparse vector 
         for i in range(len(ex_words)-1):
             word_pair = ex_words[i].lower() + ex_words[i+1].lower()
+            # adding one if the corresponding index is in the list 
             if self.indexer.contains(word_pair):
                 k = self.indexer.index_of(word_pair)
                 c.update([k])
@@ -88,11 +91,59 @@ class BigramFeatureExtractor(FeatureExtractor):
 class BetterFeatureExtractor(FeatureExtractor):
     """
     Better feature extractor...try whatever you can think of!
+
+    Combined unigram and bigrams 
     """
 
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
 
+    def get_indexer(self):
+        return self.indexer
+
+    def add_feats(self, list_of_words: List[str]):
+        for i in range(len(list_of_words)-1):
+            # addding both the unigram and the bigram to the indexer 
+            word_pair = list_of_words[i].lower() + list_of_words[i+1].lower()
+            self.indexer.add_and_get_index(word_pair)
+            self.indexer.add_and_get_index(list_of_words[i].lower())
+        self.indexer.add_and_get_index(list_of_words[len(list_of_words)-1].lower())
+
+    def extract_features(self, ex_words: List, add_to_index: bool = False) -> List[int]:
+        c = Counter()
+        for i in range(len(ex_words)-1):
+            # adding one if the corresponding index for the bigram or unigram is in the list 
+            word_pair = ex_words[i].lower() + ex_words[i+1].lower()
+            if self.indexer.contains(word_pair):
+                k = self.indexer.index_of(word_pair)
+                c.update([k])
+            if self.indexer.contains(ex_words[i].lower()):
+                k = self.indexer.index_of(ex_words[i].lower())
+                c.update([k])
+        if self.indexer.contains(ex_words[len(ex_words)-1].lower()):
+            k = self.indexer.index_of(ex_words[len(ex_words)-1].lower())
+            c.update([k])
+        return list(c.items())
+
+    '''
+    Trigram attempt - lower percent didn't work  
+    def add_feats(self, ex_words: List[str]):
+        for i in range(len(ex_words)-2):
+            # remove stop works 
+            # if ex_words[i].lower() not in stop_words or ex_words[i+1].lower() not in stop_words:
+            word_pair = ex_words[i].lower() + ex_words[i+1].lower() + ex_words[i+2].lower()
+            self.indexer.add_and_get_index(word_pair)
+
+    def extract_features(self, ex_words: List, add_to_index: bool = False) -> List[int]:
+        c = Counter()
+        for i in range(len(ex_words)-2):
+            word_pair = ex_words[i].lower() + ex_words[i+1].lower() + ex_words[i+2].lower()
+            if self.indexer.contains(word_pair):
+                k = self.indexer.index_of(word_pair)
+                c.update([k])
+        return list(c.items())
+    '''
+    
 
 class SentimentClassifier(object):
     """
@@ -142,7 +193,9 @@ class LogisticRegressionClassifier(SentimentClassifier):
         self.features = {}
 
     def get_feats(self, ex_words: List[str]) -> List[int]:
+        # joining words to make a sentence 
         sent = ''.join(ex_words)
+        # creating a feature vector if the features dict doesnt have the sentence, otherwise uses that as feature vector 
         if sent not in self.features:
             f_x = self.feature_extractor.extract_features(ex_words)
             self.features[sent] = f_x
@@ -151,35 +204,36 @@ class LogisticRegressionClassifier(SentimentClassifier):
         return f_x
 
     def sigmoid(self, x):
+        # calculating the sigmoid function
         output = 1/(1 + np.exp(-x))
-        # output = max(output, 1e-8)
-        # output = min(output, 1-1e-8)
         return output
 
     def predict(self, ex_words: List[str]) -> int:
+        # get all the features 
         f_x = self.get_feats(ex_words)
-        wfx = 0
-
+        weight_fx = 0
+        # get weights multiplied by the value of features
         for k, v in f_x:
-            wfx += self.weights[k] * v
-
-        p = self.sigmoid(wfx)
+            weight_fx += self.weights[k] * v
+        # find the value from the sigmoid function
+        p = self.sigmoid(weight_fx)
+        # if it's greater than 0.5 predict 1 otherwise predict 0
         if p > 0.5:
             return 1
         return 0
 
     def update(self, ex_words: List, y, y_pred, alpha):
+        # get features, weighted feature vector then calc sigmoid
         f_x = self.get_feats(ex_words)
-        wfx = 0
+        weight_fx = 0
         for k, v in f_x:
-            wfx += self.weights[k] * v
-        prob = self.sigmoid(wfx)
+            weight_fx += self.weights[k] * v
+        prob = self.sigmoid(weight_fx)
+        # gradient descent 
         '''
-        update rules: write about tomoorow 
-        p = log(ex/(1+ex))
-        dp/dx = 1 - ex/(1+ex) = 1/(1+ex)
-        loss = -y * log(p) - (1-y) * log(1-p)
-        d(loss)/dw = -y * fx *(1-p) + (1-y) * fx*p
+        loss = -[y log sigma(w . x + b) + (1-y) log(sigma (w. x + b))]
+        take derivative w.r.t weight to optimize 
+        d loss/dw = x_j[ sigma(w.x+b) - y]
         '''
         for key, x_j in f_x:
             self.weights[key] = self.weights[key] - \
@@ -188,20 +242,18 @@ class LogisticRegressionClassifier(SentimentClassifier):
     def get_loss(self, train_exs):
         loss_sum = 0
         for ex in train_exs:
-            y = ex.label
-            x = ex.words
-            f_x = self.get_feats(x)
-
-            wfx = 0
-
+            # get features, weighted featt, the label, and calc sigmoid
+            y_lab = ex.label
+            f_x = self.get_feats(ex.words)
+            weight_fx = 0
             for k, v in f_x:
-                wfx += self.weights[k] * v
-
-            p = self.sigmoid(wfx)
-            loss = - y * np.log(p) - (1 - y) * np.log(1 - p)
+                weight_fx += self.weights[k] * v
+            prob = self.sigmoid(weight_fx)
+            # calc loss and add to the sum - log at 0 error so multiplying label by 1e-5
+            loss = - y_lab * np.log(prob) - (1 - y_lab*1e-5) * np.log(1 - prob*1e-5)
             loss_sum += loss
-
-        return loss_sum / float(len(train_exs))  # normalize
+        # normalize the loss sum
+        return loss_sum / float(len(train_exs)) 
 
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
@@ -223,24 +275,23 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
+    # use feature extractor ot get features and create the model
     for ex in train_exs:
         feat_extractor.add_feats(ex.words)
 
     model = LogisticRegressionClassifier(feat_extractor)
-    epochs = 30
-    alpha = 0.5
-    for t in range(epochs):
+  
+    epochs = 20
+    alpha = 0.1
+    # loop through epochs by shuffling data, getting examples, then updating the model
+    for epoch in range(epochs):
         random.shuffle(train_exs)
-        # sample_size = len(train_exs)
-        sampled_exs = train_exs[:len(train_exs)]
-
-        for ex in sampled_exs:
+        sample_exs = train_exs[:len(train_exs)]
+        for ex in sample_exs:
             y = ex.label
             y_pred = model.predict(ex.words)
             model.update(ex.words, y, y_pred, alpha)
     return model
-  #  raise Exception("Must be implemented")
-
 
 def train_model(args, train_exs: List[SentimentExample]) -> SentimentClassifier:
     """
