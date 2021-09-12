@@ -293,6 +293,55 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
             model.update(ex.words, y, y_pred, alpha)
     return model
 
+    # plotting average training loss and dev accuracy (used sentiment classifer for accuracy)
+    # storing all the loss and acc and num epochs in np arrays for matplotlib bc it took long to run
+    # x = np.arange(0,epochs-1)
+    # learning_rate = .99
+    # avg_losses = np.zeros(epochs-1)
+    # dev_exs = read_sentiment_examples('data/dev.txt')
+
+    # for i in range(epochs):
+    #     for ex in train_exs:
+    #         y = ex.label
+    #         y_pred = model.predict(ex.words)
+    #         model.update(ex.words, y, y_pred, learning_rate)
+    #   #  avg_losses[i-1] = model.get_loss(train_exs)
+    #     avg_losses[i-1] = evaluate(model, dev_exs)
+    # plt.plot(x, avg_losses,label="Step=.99")
+    # model = LogisticRegressionClassifier(feat_extractor)
+    # x_1 = np.arange(0,epochs-1)
+    # learning_rate = .1
+    # avg_losses_1 = np.zeros(epochs-1)
+    # for i in range(epochs):
+    #     for ex in train_exs:
+    #         y = ex.label
+    #         y_pred = model.predict(ex.words)
+    #         model.update(ex.words, y, y_pred, learning_rate)
+    # #    avg_losses_1[i-1] = model.get_loss(dev)
+    #     avg_losses_1[i-1] = evaluate(model, dev_exs)
+        
+    # plt.plot(x_1, avg_losses_1, label="Step=0.1")
+    # model = LogisticRegressionClassifier(feat_extractor)
+
+    # x_2 = np.arange(0,epochs-1)
+    # learning_rate = .02
+    # avg_losses_2 = np.zeros(epochs-1)
+    # for i in range(epochs):
+    #     for ex in train_exs:
+    #         y = ex.label
+    #         y_pred = model.predict(ex.words)
+    #         model.update(ex.words, y, y_pred, learning_rate)
+    #  #   avg_losses_2[i-1] = model.get_loss(train_exs)
+    #     avg_losses_2[i-1] = evaluate(model, dev_exs)
+    # plt.plot(x_2, avg_losses_2, label="Step=0.02")
+    # plt.legend(loc='upper right')
+    # plt.xlabel("Batch")
+    # plt.ylabel("Accuracy")
+    # plt.xticks(np.linspace(0,34,35))
+    # plt.show()
+
+
+
 def train_model(args, train_exs: List[SentimentExample]) -> SentimentClassifier:
     """
     Main entry point for your modifications. Trains and returns one of several models depending on the args
