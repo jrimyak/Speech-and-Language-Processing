@@ -167,7 +167,13 @@ def get_word_index(word_indexer: Indexer, word_counter: Counter, word: str) -> i
     else:
         return word_indexer.add_and_get_index(word)
 
-
+# TODO: IMPLEMENT FeatureBasedSequenceScorer
+class FeatureBasedSequenceScore(object):
+    def __init__(self):
+        self.test = 0.0
+        
+    def method(self):
+        return None 
 class CrfNerModel(object):
     def __init__(self, tag_indexer, feature_indexer, feature_weights):
         self.tag_indexer = tag_indexer
