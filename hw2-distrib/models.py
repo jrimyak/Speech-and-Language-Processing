@@ -66,7 +66,34 @@ class HmmNerModel(object):
         :param sentence_tokens: List of the tokens in the sentence to tag
         :return: The LabeledSentence consisting of predictions over the sentence
         """
-        raise Exception("IMPLEMENT ME")
+        # create a path probability matrix
+        scorer = ProbabilisticSequenceScorer(self.tag_indexer, self.word_indexer, self.init_log_probs, self.transition_log_probs, self.emission_log_probs)
+        T = len(sentence_tokens)
+        N = len(self.tag_indexer)
+        viterbi = np.zeros((len(sentence_tokens), len(self.tag_indexer)))
+        backpointers = np.zeros((len(sentence_tokens), len(self.tag_indexer)))
+        for i in range(len(self.tag_indexer)):
+            viterbi[0][i] = scorer.score_init(sentence_tokens, i) + scorer.score_emission(sentence_tokens, i, 0)
+            # backpointers[0][i] = 0
+
+        # recursive step 
+        for time in range(1, len(sentence_tokens)):
+            for state in range(len(self.tag_indexer)):
+                temp = np.zeros(len(self.tag_indexer))
+                for i in range(len(self.tag_indexer)):
+                    temp[i] = viterbi[time-1][i] + scorer.score_transition(sentence_tokens,i,state) + scorer.score_emission(sentence_tokens,state,time)
+                viterbi[time, state] = np.max(temp)
+                backpointers[time, state] = np.argmax(temp)
+        
+
+        pred_tags = []
+        tag_index = np.argmax(viterbi[-1, :])
+        pred_tags.append((self.tag_indexer.get_object(np.argmax(viterbi[-1, :]))))
+        for t in range(len(sentence_tokens) - 1, 0, -1):
+            pred_tags.append(self.tag_indexer.get_object(np.int(backpointers[t, tag_index])))
+            tag_index = np.int(backpointers[t, tag_index])
+        pred_tags = list(reversed(pred_tags))
+        return LabeledSentence(sentence_tokens, chunks_from_bio_tag_seq(pred_tags))
 
 
 def train_hmm_model(sentences: List[LabeledSentence]) -> HmmNerModel:
