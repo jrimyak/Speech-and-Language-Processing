@@ -8,7 +8,7 @@ from collections import Counter
 from typing import List
 
 import numpy as np
-
+import scipy
 
 class ProbabilisticSequenceScorer(object):
     """
@@ -169,11 +169,15 @@ def get_word_index(word_indexer: Indexer, word_counter: Counter, word: str) -> i
 
 # TODO: IMPLEMENT FeatureBasedSequenceScorer
 class FeatureBasedSequenceScore(object):
-    def __init__(self):
-        self.test = 0.0
+    def __init__(self, feature_weights, feature_cache):
+        self.feature_weights = feature_weights
+        self.feature_cache = feature_cache
+
+    def score_emission(self, word_index, tag_index):
+        feats = self.feature_cache[word_index][tag_index]
+        emission = score_indexed_features(feats, self.feature_weights)
+        return emission
         
-    def method(self):
-        return None 
 class CrfNerModel(object):
     def __init__(self, tag_indexer, feature_indexer, feature_weights):
         self.tag_indexer = tag_indexer
@@ -181,7 +185,46 @@ class CrfNerModel(object):
         self.feature_weights = feature_weights
 
     def decode(self, sentence_tokens):
-        raise Exception("IMPLEMENT ME")
+        predict_tags = []
+
+        # feature cache
+        feature_cache = [[[] for k in range(len(self.tag_indexer))] for j in range(len(sentence_tokens))]
+        for word_idx in range(len(sentence_tokens)):
+            for t in range(len(self.tag_indexer)):
+                feature_cache[word_idx][t] = extract_emission_features(sentence_tokens, word_idx, self.tag_indexer.get_object(t), self.feature_indexer, False)
+        
+        scorer = FeatureBasedSequenceScore(self.feature_weights, feature_cache)
+        v = np.zeros((len(sentence_tokens), len(self.tag_indexer)))
+        backtrace = np.zeros((len(sentence_tokens), len(self.tag_indexer)))
+
+        for i in range(len(self.tag_indexer)):
+            v[0, i] = scorer.score_emission(0, i)
+
+        for t in range(1, len(sentence_tokens)):
+            for j in range(len(self.tag_indexer)):
+                emission = scorer.score_emission(t, j)
+                max_val = np.zeros(len(self.tag_indexer))
+                for i in range(len(self.tag_indexer)):
+                    constraint = 0
+                    curr_tag = self.tag_indexer.get_object(j)
+                    prev_tag = self.tag_indexer.get_object(i)
+                    if prev_tag == 'O' and curr_tag[0] == 'I':
+                        constraint = -np.inf
+                    elif curr_tag[0] == 'I':
+                        if prev_tag[2:] != curr_tag[2:]:
+                            constraint = -np.inf
+                    max_val[i] = v[t-1,i] + constraint + emission
+                backtrace[t, j] = np.argmax(max_val)
+                v[t, j] = np.max(max_val)
+        
+        tag_index = np.argmax(v[-1, :])
+        predict_tags.append(self.tag_indexer.get_object(tag_index))
+        for p in range(len(sentence_tokens) -1, 0, -1):
+            predict_tags.append(self.tag_indexer.get_object(np.int(backtrace[p, tag_index])))
+            tag_index = np.int(backtrace[p, tag_index])
+        
+        predict_tags.reverse()
+        return LabeledSentence(sentence_tokens, chunks_from_bio_tag_seq(predict_tags))
 
 
 # Trains a CrfNerModel on the given corpus of sentences.
@@ -201,8 +244,62 @@ def train_crf_model(sentences):
             for tag_idx in range(0, len(tag_indexer)):
                 feature_cache[sentence_idx][word_idx][tag_idx] = extract_emission_features(sentences[sentence_idx].tokens, word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)
     print("Training")
-    raise Exception("IMPLEMENT THE REST OF ME")
+    #raise Exception("IMPLEMENT THE REST OF ME")
+    
+    feature_weight = np.zeros(len(feature_indexer))
+    optimizer = UnregularizedAdagradTrainer(feature_weight)
+    N = len(tag_indexer)
 
+    for epoch in range(2):
+        # shuffle 
+        sentences_shuffled_idx = list(range(len(sentences)))
+        np.random.shuffle(sentences_shuffled_idx)
+        for sentence_idx in sentences_shuffled_idx:
+            T = len(sentences[sentence_idx])
+            alpha = np.zeros((T, N))
+            beta = np.zeros((T, N))
+            for tag in range(N):
+                alpha[0, tag] = optimizer.score(feature_cache[sentence_idx][0][tag])
+                beta[-1, tag] = 0 
+            for word in range(1, T):
+                for curr_tag in range(N):
+                    emission = optimizer.score(feature_cache[sentence_idx][word][curr_tag])
+                    for prev_tag in range(N):
+                        if prev_tag == 0:
+                            alpha[word, curr_tag] = alpha[word -1, prev_tag]
+                        else:
+                            alpha[word, curr_tag] = np.logaddexp(alpha[word, curr_tag], alpha[word - 1, prev_tag])
+                    alpha[word, curr_tag] += emission
+            for word in range(T - 2, 0, -1):
+                for curr_tag in range(N):
+                    for next_tag in range(N):
+                        emission = optimizer.score(feature_cache[sentence_idx][word+1][next_tag])
+                        if next_tag == 0:
+                            beta[word, curr_tag] = beta[word + 1, next_tag] + emission
+                        else:
+                            beta[word, curr_tag] = np.logaddexp(beta[word, curr_tag], beta[word+1, next_tag] + emission)
+
+            marginal_problog = np.zeros((T, N))
+            marginal_problog_denom = np.zeros(T)
+            for word in range(T):
+                marginal_problog_denom[word] = alpha[word, 0] + beta[word, 0]
+                for tag in range(1, N):
+                    marginal_problog_denom[word] = np.logaddexp(marginal_problog_denom[word], alpha[word, tag] + beta[word, tag])
+            
+            for word in range(T):
+                for tag in range(N):
+                    marginal_problog[word, tag] = alpha[word, tag] + beta[word, tag] - marginal_problog_denom[word]
+            
+            gradient = Counter()
+            for word in range(T):
+                gold_tag = tag_indexer.index_of(sentences[sentence_idx].get_bio_tags()[word])
+                for feature in feature_cache[sentence_idx][word][gold_tag]:
+                    gradient[feature] += 1
+                for tag in range(N):
+                    for feature in feature_cache[sentence_idx][word][tag]:
+                        gradient[feature] -= np.exp(marginal_problog[word][tag])
+            optimizer.apply_gradient_update(gradient, 1)
+    return CrfNerModel(tag_indexer, feature_indexer, optimizer.get_final_weights())
 
 def extract_emission_features(sentence_tokens: List[Token], word_index: int, tag: str, feature_indexer: Indexer, add_to_indexer: bool):
     """
