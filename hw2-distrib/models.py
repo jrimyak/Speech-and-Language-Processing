@@ -171,7 +171,7 @@ class FeatureBasedSequenceScore(object):
         self.feature_weights = feature_weights
         self.feature_cache = feature_cache
 
-    def score_emission(self, word_index, tag_index):
+    def indexed_feat_score(self, word_index, tag_index):
         feats = self.feature_cache[word_index][tag_index]
         emission = score_indexed_features(feats, self.feature_weights)
         return emission
@@ -190,19 +190,24 @@ class CrfNerModel(object):
         for word_idx in range(len(sentence_tokens)):
             for t in range(len(self.tag_indexer)):
                 feature_cache[word_idx][t] = extract_emission_features(sentence_tokens, word_idx, self.tag_indexer.get_object(t), self.feature_indexer, False)
-        
+        N = len(sentence_tokens)  # Number of observations
+        T = len(self.tag_indexer)  # Number of states 
         scorer = FeatureBasedSequenceScore(self.feature_weights, feature_cache)
-        v = np.zeros((len(sentence_tokens), len(self.tag_indexer)))
-        backtrace = np.zeros((len(sentence_tokens), len(self.tag_indexer)))
+        v = np.zeros((N, T))
+        backtrace = np.zeros((N, T))
 
-        for i in range(len(self.tag_indexer)):
-            v[0, i] = scorer.score_emission(0, i)
+        score_matrix = np.zeros((N, T))
+        for t in range(N):
+            for j in range(T):
+                score_matrix[t, j] = scorer.indexed_feat_score(t, j)
+        for i in range(T):
+            v[0, i] = scorer.indexed_feat_score(0, i)
 
-        for t in range(1, len(sentence_tokens)):
-            for j in range(len(self.tag_indexer)):
-                emission = scorer.score_emission(t, j)
-                max_val = np.zeros(len(self.tag_indexer))
-                for i in range(len(self.tag_indexer)):
+        for t in range(1, N):
+            for j in range(T):
+                emission = score_matrix[t, j]
+                max_val = np.zeros(T)
+                for i in range(T):
                     constraint = 0
                     curr_tag = self.tag_indexer.get_object(j)
                     prev_tag = self.tag_indexer.get_object(i)
@@ -217,7 +222,7 @@ class CrfNerModel(object):
         
         tag_index = np.argmax(v[-1, :])
         predict_tags.append(self.tag_indexer.get_object(tag_index))
-        for p in range(len(sentence_tokens) -1, 0, -1):
+        for p in range(N-1, 0, -1):
             predict_tags.append(self.tag_indexer.get_object(np.int(backtrace[p, tag_index])))
             tag_index = np.int(backtrace[p, tag_index])
         
@@ -244,24 +249,12 @@ def train_crf_model(sentences):
     print("Training")
     feature_weights = np.zeros(len(feature_indexer))
     optimizer = UnregularizedAdagradTrainer(feature_weights)
-    for epoch in range(5):
-        # shuffle 
-        # sentences_shuffled_idx = list(range(len(sentences)))
-        # np.random.shuffle(sentences_shuffled_idx)
+    for epoch in range(1):
         for sentence_idx in range(len(sentences)):
-            # T = len(sentences[sentence_idx])
-            # log_a = np.zeros((T, N))
-            # log_b = np.zeros((T, N))
-
-            # # #feature matrix
-            # # feature_matrix = np.zeros(shape=(T, N))
-           
             gradients = Counter()
-
             N = len(sentences[sentence_idx])  # Number of observations
             T = len(tag_indexer)  # Number of states
-            
-            # Construct feature matrix
+            # Construct feature matrix NAME POTENTIAL PHIS 
             feature_matrix = np.zeros((T, N))
             for y in range(T):
                 for x in range(N):
@@ -270,15 +263,9 @@ def train_crf_model(sentences):
 
             forward = np.zeros((T, N))  # create a matrix to store the forward probabilities
             backward = np.zeros((T, N))  # create a matrix to store the backward probabilities
-
-            #   Forward-backward algorithm to calculate P(y_i = s | X)
-            #   NOTE: I ignore transition feature for now
-
             #  Forward
             # Initialization step
-            #for y in range(T):
             forward[:, 0] = feature_matrix[:, 0]
-            
             # Recursion step
             for x in range(1, N):
                 for y in range(T):
@@ -290,13 +277,8 @@ def train_crf_model(sentences):
                     #     else:
                     #         a = np.logaddexp(a, forward[y_prev, x - 1])
                     forward[y, x] = feature_matrix[y, x] + np.logaddexp.reduce(forward[:, x - 1])
-
             # Backward
             # Initialization step
-           
-            # for y in range(T):
-            # backward[:, N - 1] = 0  # alternatively, backward[:,-1] = 0
-
             # Recursion step
             for x in range(1, N):
                 for y in range(T):
@@ -311,13 +293,6 @@ def train_crf_model(sentences):
             # Calculate normalizing constant Z in log space
             # Z is a constant. Since the last column of the backward matrix contains all 0s,
             # we can use the last column to avoid using backward matrix.
-            # Z = 0
-            # for y in range(T):
-            #     if y > 0:
-            #         Z = np.logaddexp(Z, forward[T-1, -1])
-            #     else:
-            #         Z = forward[y, -1] 
-
             Z = np.logaddexp.reduce(forward[:, -1])
             # Compute the posterior probability -P(y_i = s | X)
             p_y_s_x = np.zeros((T, N))
@@ -329,7 +304,6 @@ def train_crf_model(sentences):
 
                  # Find the gold tag for the given word
                 gold_tag = tag_indexer.index_of(sentences[sentence_idx].get_bio_tags()[word_idx])
-             #   features = feature_cache[sentence_idx][word_idx][gold_tag]
                 # loss += np.sum([feature_weights[i] for i in features])
                 for feature in feature_cache[sentence_idx][word_idx][gold_tag]:
                     gradients[feature] += 1  # feature value is 0 or 1
