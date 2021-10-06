@@ -6,9 +6,7 @@ from utils import *
 
 from collections import Counter
 from typing import List
-
 import numpy as np
-import scipy
 
 class ProbabilisticSequenceScorer(object):
     """
@@ -244,61 +242,106 @@ def train_crf_model(sentences):
             for tag_idx in range(0, len(tag_indexer)):
                 feature_cache[sentence_idx][word_idx][tag_idx] = extract_emission_features(sentences[sentence_idx].tokens, word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)
     print("Training")
-    #raise Exception("IMPLEMENT THE REST OF ME")
-    
-    feature_weight = np.zeros(len(feature_indexer))
-    optimizer = UnregularizedAdagradTrainer(feature_weight)
-    N = len(tag_indexer)
-
-    for epoch in range(2):
+    feature_weights = np.zeros(len(feature_indexer))
+    optimizer = UnregularizedAdagradTrainer(feature_weights)
+    for epoch in range(5):
         # shuffle 
-        sentences_shuffled_idx = list(range(len(sentences)))
-        np.random.shuffle(sentences_shuffled_idx)
-        for sentence_idx in sentences_shuffled_idx:
-            T = len(sentences[sentence_idx])
-            alpha = np.zeros((T, N))
-            beta = np.zeros((T, N))
-            for tag in range(N):
-                alpha[0, tag] = optimizer.score(feature_cache[sentence_idx][0][tag])
-                beta[-1, tag] = 0 
-            for word in range(1, T):
-                for curr_tag in range(N):
-                    emission = optimizer.score(feature_cache[sentence_idx][word][curr_tag])
-                    for prev_tag in range(N):
-                        if prev_tag == 0:
-                            alpha[word, curr_tag] = alpha[word -1, prev_tag]
-                        else:
-                            alpha[word, curr_tag] = np.logaddexp(alpha[word, curr_tag], alpha[word - 1, prev_tag])
-                    alpha[word, curr_tag] += emission
-            for word in range(T - 2, 0, -1):
-                for curr_tag in range(N):
-                    for next_tag in range(N):
-                        emission = optimizer.score(feature_cache[sentence_idx][word+1][next_tag])
-                        if next_tag == 0:
-                            beta[word, curr_tag] = beta[word + 1, next_tag] + emission
-                        else:
-                            beta[word, curr_tag] = np.logaddexp(beta[word, curr_tag], beta[word+1, next_tag] + emission)
+        # sentences_shuffled_idx = list(range(len(sentences)))
+        # np.random.shuffle(sentences_shuffled_idx)
+        for sentence_idx in range(len(sentences)):
+            # T = len(sentences[sentence_idx])
+            # log_a = np.zeros((T, N))
+            # log_b = np.zeros((T, N))
 
-            marginal_problog = np.zeros((T, N))
-            marginal_problog_denom = np.zeros(T)
-            for word in range(T):
-                marginal_problog_denom[word] = alpha[word, 0] + beta[word, 0]
-                for tag in range(1, N):
-                    marginal_problog_denom[word] = np.logaddexp(marginal_problog_denom[word], alpha[word, tag] + beta[word, tag])
+            # # #feature matrix
+            # # feature_matrix = np.zeros(shape=(T, N))
+           
+            gradients = Counter()
+
+            N = len(sentences[sentence_idx])  # Number of observations
+            T = len(tag_indexer)  # Number of states
             
-            for word in range(T):
-                for tag in range(N):
-                    marginal_problog[word, tag] = alpha[word, tag] + beta[word, tag] - marginal_problog_denom[word]
+            # Construct feature matrix
+            feature_matrix = np.zeros((T, N))
+            for y in range(T):
+                for x in range(N):
+                    # Calculate $\phi_e(y_i,i,\pmb{x})$
+                    feature_matrix[y, x] = np.sum(np.take(feature_weights, np.asarray(feature_cache[sentence_idx][x][y])))
+
+            forward = np.zeros((T, N))  # create a matrix to store the forward probabilities
+            backward = np.zeros((T, N))  # create a matrix to store the backward probabilities
+
+            #   Forward-backward algorithm to calculate P(y_i = s | X)
+            #   NOTE: I ignore transition feature for now
+
+            #  Forward
+            # Initialization step
+            #for y in range(T):
+            forward[:, 0] = feature_matrix[:, 0]
             
-            gradient = Counter()
-            for word in range(T):
-                gold_tag = tag_indexer.index_of(sentences[sentence_idx].get_bio_tags()[word])
-                for feature in feature_cache[sentence_idx][word][gold_tag]:
-                    gradient[feature] += 1
-                for tag in range(N):
-                    for feature in feature_cache[sentence_idx][word][tag]:
-                        gradient[feature] -= np.exp(marginal_problog[word][tag])
-            optimizer.apply_gradient_update(gradient, 1)
+            # Recursion step
+            for x in range(1, N):
+                for y in range(T):
+                    # sum = logsumexp(forward[:,t-1])
+                    # a = 0
+                    # for y_prev in range(T):
+                    #     if y_prev == 0:
+                    #         a = forward[y_prev, x - 1]
+                    #     else:
+                    #         a = np.logaddexp(a, forward[y_prev, x - 1])
+                    forward[y, x] = feature_matrix[y, x] + np.logaddexp.reduce(forward[:, x - 1])
+
+            # Backward
+            # Initialization step
+           
+            # for y in range(T):
+            # backward[:, N - 1] = 0  # alternatively, backward[:,-1] = 0
+
+            # Recursion step
+            for x in range(1, N):
+                for y in range(T):
+                    # a = 0
+                    # for y_prev in range(T):
+                    #     if y_prev == 0:
+                    #         a = backward[y_prev, N - x] + feature_matrix[y_prev, N - x]
+                    #     else:
+                    #         a = np.logaddexp(a, backward[y_prev, N - x] + feature_matrix[y_prev, N - x])
+                    backward[y, N - x - 1] = np.logaddexp.reduce(backward[:, N - x] + feature_matrix[:, N - x])
+
+            # Calculate normalizing constant Z in log space
+            # Z is a constant. Since the last column of the backward matrix contains all 0s,
+            # we can use the last column to avoid using backward matrix.
+            # Z = 0
+            # for y in range(T):
+            #     if y > 0:
+            #         Z = np.logaddexp(Z, forward[T-1, -1])
+            #     else:
+            #         Z = forward[y, -1] 
+
+            Z = np.logaddexp.reduce(forward[:, -1])
+            # Compute the posterior probability -P(y_i = s | X)
+            p_y_s_x = np.zeros((T, N))
+ 
+            #  Compute the stochastic gradient of the feature vector for a sentence
+            #  gradients = sum of gold features - expected features under model
+            for word_idx in range(N):
+                p_y_s_x[:, word_idx] = np.exp(forward[:, word_idx] + backward[:, word_idx] - Z)
+
+                 # Find the gold tag for the given word
+                gold_tag = tag_indexer.index_of(sentences[sentence_idx].get_bio_tags()[word_idx])
+             #   features = feature_cache[sentence_idx][word_idx][gold_tag]
+                # loss += np.sum([feature_weights[i] for i in features])
+                for feature in feature_cache[sentence_idx][word_idx][gold_tag]:
+                    gradients[feature] += 1  # feature value is 0 or 1
+
+                # Calculate expected features = p(y_i = s | x) * feature
+                for tag_idx in range(T):
+                  #  features = feature_cache[sentence_idx][word_idx][tag_idx]
+                    for feature in feature_cache[sentence_idx][word_idx][tag_idx]:
+                        gradients[feature] -= p_y_s_x[tag_idx, word_idx]
+
+            # Update the weights using the gradient computed
+            optimizer.apply_gradient_update(gradients, 1)
     return CrfNerModel(tag_indexer, feature_indexer, optimizer.get_final_weights())
 
 def extract_emission_features(sentence_tokens: List[Token], word_index: int, tag: str, feature_indexer: Indexer, add_to_indexer: bool):
