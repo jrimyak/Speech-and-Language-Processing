@@ -108,8 +108,8 @@ class Seq2SeqSemanticParser(object):
         for idx in range(num_examples):
 
             out_toks = []
-            inp_ex = torch.from_numpy(all_test_input_data[idx]).unsqueeze(0)
-            inp_len = torch.from_numpy(
+            inp_ex = torch.tensor(all_test_input_data[idx]).unsqueeze(0)
+            inp_len = torch.tensor(
                 (np.array(len(test_data[idx].x_tok)))).unsqueeze(0)
             enc_output_each_word, enc_context_mask, enc_final_states = encode_input_for_decoder(
                 inp_ex, inp_len, self.input_embeddings, self.encoder)
@@ -223,17 +223,17 @@ def train_model_encdec(train_data: List[Example], test_data: List[Example], inpu
 
     # Create model
     model_input_emb = EmbeddingLayer(
-        100, len(input_indexer), 0.2)
-    model_enc = RNNEncoder(100, 200,\
+        200, len(input_indexer), 0.2)
+    model_enc = RNNEncoder(200, 400,\
                           True)
     model_output_emb = EmbeddingLayer(
-        100, len(output_indexer),0.2)
+        200, len(output_indexer),0.2)
     # Loop over epochs, loop over examples, given some indexed words, call encode_input_for_decoder, then call your
     # decoder, accumulate losses, update parameters
 
     # model_dec = DecoderCell(args.input_dim, args.hidden_size, len(output_indexer), dropout=0)
     model_attn_dec = AttentionDecoderCell(
-        100, 200, len(output_indexer), input_max_len)
+        200, 400, len(output_indexer), input_max_len)
 
     SOS_idx = torch.tensor(output_indexer.index_of("<SOS>")).unsqueeze(0)
     EOS_idx = output_indexer.index_of("<EOS>")
@@ -245,25 +245,25 @@ def train_model_encdec(train_data: List[Example], test_data: List[Example], inpu
         list(model_input_emb.parameters()) + \
         list(model_output_emb.parameters())
     optimizer = optim.Adam(params, lr=args.lr)
+    criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     for epoch in range(args.epochs):
         print("epoch:", epoch)
 
         ex_indices = [i for i in range(num_examples)]
         random.shuffle(ex_indices)
-
+        loss = 0
+        count = 0
         for idx in ex_indices:
-
-            loss = torch.autograd.Variable(torch.FloatTensor([0]))
-            criterion = nn.CrossEntropyLoss(ignore_index=0)
+            loss = torch.zeros(1, dtype=torch.float64, requires_grad=True)
             # model_dec.zero_grad()
             model_attn_dec.zero_grad()
             model_enc.zero_grad()
             model_input_emb.zero_grad()
             model_output_emb.zero_grad()
 
-            inp_ex = torch.from_numpy(all_train_input_data[idx]).unsqueeze(0)
-            inp_len = torch.from_numpy(
+            inp_ex = torch.tensor(all_train_input_data[idx]).unsqueeze(0)
+            inp_len = torch.tensor(
                 (np.array(len(train_data[idx].x_tok)))).unsqueeze(0)
             gold_len = len(train_data[idx].y_indexed)
             enc_output_each_word, enc_context_mask, enc_final_states = encode_input_for_decoder(
@@ -274,7 +274,7 @@ def train_model_encdec(train_data: List[Example], test_data: List[Example], inpu
                 1).unsqueeze(0), enc_final_states, enc_output_each_word)
 
             for gold_idx in train_data[idx].y_indexed:
-                loss += criterion(class_scores, torch.LongTensor([gold_idx]))
+                loss = loss + criterion(class_scores, torch.LongTensor([gold_idx]))
 
                 if gold_idx == EOS_idx:
                     break
@@ -284,10 +284,10 @@ def train_model_encdec(train_data: List[Example], test_data: List[Example], inpu
                     torch.tensor(gold_idx).unsqueeze(0)).unsqueeze(0)
                 class_scores, dec_hid = model_attn_dec.forward(
                     inp_emb, torch.tensor(1).unsqueeze(0), dec_hid, enc_output_each_word)
-
+            count+=1
             loss.backward()
             optimizer.step()
-
+        print('loss ' + str(loss/count))
         # if epoch % 1 == 0:
         #    oml = output_max_len*3
         #    s=Seq2SeqSemanticParser(model_enc,model_attn_dec,model_input_emb,model_output_emb,input_indexer,output_indexer,args.reverse_input,oml)
@@ -298,7 +298,7 @@ def train_model_encdec(train_data: List[Example], test_data: List[Example], inpu
         #    if epoch >= 19 and denotation > 61:
         #        return Seq2SeqSemanticParser(model_enc, model_attn_dec, model_input_emb, model_output_emb, input_indexer, output_indexer, args.reverse_input, output_max_len * 3)
 
-    return Seq2SeqSemanticParser(model_enc, model_attn_dec, model_input_emb, model_output_emb, input_indexer, output_indexer, True, output_max_len * 3)
+    return Seq2SeqSemanticParser(model_enc, model_attn_dec, model_input_emb, model_output_emb, input_indexer, output_indexer, True, output_max_len)
 
 
 
