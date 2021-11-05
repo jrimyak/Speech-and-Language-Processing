@@ -131,7 +131,21 @@ class Decoder(nn.Module):
         self.out = nn.Linear(hid_dim, output_dim)
         
         self.dropout = nn.Dropout(dropout)
-        
+        self.init_weight()
+
+    def init_weight(self):
+        """
+        Initializes weight matrices using Xavier initialization
+        :return:
+        """
+
+        nn.init.xavier_uniform_(self.out.weight)
+        nn.init.xavier_uniform_(self.rnn.weight_hh_l0, gain=1)
+        nn.init.xavier_uniform_(self.rnn.weight_ih_l0, gain=1)
+
+        nn.init.constant_(self.rnn.bias_hh_l0, 0)
+        nn.init.constant_(self.rnn.bias_ih_l0, 0)
+ 
     def forward(self, input, hidden, cell):
         
 
@@ -144,3 +158,64 @@ class Decoder(nn.Module):
         #prediction = [batch size, output dim]
         
         return prediction, hidden, cell
+
+class AttentionDecoder(nn.Module):
+    '''
+    using general attention
+    '''
+    def __init__(self, output_dim, emb_dim, hid_dim, n_layers=1, dropout=0):
+        super().__init__()
+        
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.rnn = nn.LSTM(input_size, hidden_size, num_layers=1, batch_first=True) 
+        self.fc = nn.Linear(hidden_size, num_classes)
+        self.init_weight()
+    
+    def init_weight(self):
+        # ih: input - hidden, hh: hidden - hidden, l0: layer 0, l1: layer 1
+        # weight_... : weights of input_size x hidden_size or hidden_size x hidden_size (depending on whether ih or hh is specified) are initialized
+        # bias_... : bias of size hidden_size initialized
+        nn.init.xavier_uniform_(self.rnn.weight_hh_l0, gain=1)
+        nn.init.xavier_uniform_(self.rnn.weight_ih_l0, gain=1)
+        nn.init.constant_(self.rnn.bias_hh_l0, 0)
+        nn.init.constant_(self.rnn.bias_ih_l0, 0)
+
+    def forward(self, embedded_input, input_lens, hidden_input, enc_output_states):
+        packed_embedding = nn.utils.rnn.pack_padded_sequence(embedded_input, input_lens, batch_first=True)
+        output, hn  = self.rnn(packed_embedding, hidden_input)        
+        h, c = hn[0][0], hn[1][0] 
+        h_t = (h, c)
+        class_scores = self.fc(h)
+        return (class_scores, h_t)
+
+class AttentionDecoderCell(nn.Module):
+    def __init__(self, input_size, hidden_size, num_classes, max_inp_len):
+        super(AttentionDecoderCell, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.rnn = nn.LSTM(input_size, hidden_size, num_layers=1, batch_first=True)
+        self.partial_f = nn.Linear(hidden_size, hidden_size*2)
+        self.to_class_scores = nn.Linear(hidden_size *3, num_classes, bias=True)
+        self.init_weight()
+
+    def init_weight(self):
+        # ih: input - hidden, hh: hidden - hidden, l0: layer 0, l1: layer 1
+        # weight_... : weights of input_size x hidden_size or hidden_size x hidden_size (depending on whether ih or hh is specified) are initialized
+        # bias_... : bias of size hidden_size initialized
+        nn.init.xavier_uniform_(self.rnn.weight_hh_l0, gain=1)
+        nn.init.xavier_uniform_(self.rnn.weight_ih_l0, gain=1)
+        nn.init.constant_(self.rnn.bias_hh_l0, 0)
+        nn.init.constant_(self.rnn.bias_ih_l0, 0)
+
+    def forward(self, embedded_input, input_lens, hidden_input, enc_output_states):
+        packed_embedding = nn.utils.rnn.pack_padded_sequence(embedded_input, input_lens, batch_first=True)
+        output, hn  = self.rnn(packed_embedding, hidden_input)        
+        h, c = hn[0][0], hn[1][0] 
+        h_t = (h, c)
+        e_i = torch.mm(self.partial_f(h),enc_output_states.squeeze(1).t()) 
+        a_i = torch.softmax(e_i,dim=1)
+        c_i = torch.mm(a_i,enc_output_states.squeeze(1))
+        c_i_final = torch.tanh(torch.cat((c_i,h), dim=1))
+        class_scores = self.to_class_scores(c_i_final)
+        return (class_scores, h_t)
