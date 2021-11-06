@@ -76,57 +76,55 @@ class NearestNeighborSemanticParser(object):
 
 
 class Seq2SeqSemanticParser(object):
-    def __init__(self, model_enc, model_dec, model_input_emb, model_output_emb, input_indexer, output_indexer, reverse_input, max_output_len):
+    def __init__(self, encoder, decoder, input_embedding_layer, output_embedding_layer, input_indexer, output_indexer, max_output_len):
         # raise Exception("implement me!")
-        self.encoder = model_enc
-        self.decoder = model_dec
-        self.input_embeddings = model_input_emb
-        self.output_embeddings = model_output_emb
+        self.encoder = encoder
+        self.decoder = decoder
+        self.input_embedding_layer = input_embedding_layer
+        self.output_embedding_layer = output_embedding_layer
         self.input_indexer = input_indexer
         self.output_indexer = output_indexer
-        self.reverse_input = reverse_input
         self.max_pred_len = max_output_len
 
 
     def decode(self, test_data: List[Example]) -> List[List[Derivation]]:
-        self.encoder.eval()
-        self.decoder.eval()
-        self.input_embeddings.eval()
-        self.output_embeddings.eval()
-        input_max_len = np.max(np.asarray(
-            [len(ex.x_indexed) for ex in test_data]))
-        all_test_input_data = make_padded_input_tensor(
-            test_data, self.input_indexer, input_max_len, self.reverse_input)
-        SOS_idx = torch.tensor(
-            output_indexer.index_of("<SOS>")).unsqueeze(0)
-        SOS_embed = self.output_embeddings.forward(SOS_idx).unsqueeze(0)
-        EOS_idx = torch.tensor(
-            output_indexer.index_of("<EOS>")).unsqueeze(0)
-        num_examples = len(test_data)
+        input_max_len = np.max(np.asarray([len(ex.x_indexed) for ex in test_data]))
+        # getting test input data from tthe padded input tensor method 
+        all_test_input_data = make_padded_input_tensor(test_data, self.input_indexer, input_max_len, True)
+        # defining the SOS token as a tensor and passing that through to get the embeddeding representation of that
+        SOS_index = torch.tensor(output_indexer.index_of("<SOS>")).unsqueeze(0)
+        SOS_embedding = self.output_embedding_layer.forward(SOS_index).unsqueeze(0)
+        EOS_index = torch.tensor(output_indexer.index_of("<EOS>")).unsqueeze(0)
+        # defining the listt of predictions 
         preds = []
-        print("In decode")
-        for idx in range(num_examples):
-
-            out_toks = []
-            inp_ex = torch.tensor(all_test_input_data[idx]).unsqueeze(0)
-            inp_len = torch.tensor(
-                (np.array(len(test_data[idx].x_tok)))).unsqueeze(0)
-            enc_output_each_word, enc_context_mask, enc_final_states = encode_input_for_decoder(
-                inp_ex, inp_len, self.input_embeddings, self.encoder)
-            class_scores, dec_hid = self.decoder.forward(SOS_embed, torch.tensor(
-                1).unsqueeze(0), enc_final_states, enc_output_each_word)
-            dec_hid = (dec_hid[0].unsqueeze(0), dec_hid[1].unsqueeze(0))
-            out_idx = torch.max(class_scores, dim=1)[1]
+        for index in range(len(test_data)):
+            # creating a list tof output tokena
+            output_tokens = []
+            # creating the tensor of input tokens 
+            input_tensor = torch.tensor(all_test_input_data[index]).unsqueeze(0)
+            # tensor containing the length of each sentence in the batch
+            input_length = torch.tensor((np.array(len(test_data[index].x_tok)))).unsqueeze(0)
+            # using the encode_input_for_decoder to get the encoder outputs and the encoder final states which is the h and c tuple
+            output_encoding_all, _, encode_final = encode_input_for_decoder(input_tensor, input_length, self.input_embedding_layer, self.encoder)
+            # getting the output and last hidden representation
+            output, hidden = self.decoder.forward(SOS_embedding, torch.tensor(1).unsqueeze(0), encode_final)
+            # creating a tuple of the hidden rep
+            hidden = (hidden[0].unsqueeze(0), hidden[1].unsqueeze(0))
+            # getting the output tindex which is the max of the output from the decoder 
+            out_index = torch.max(output, dim=1)[1]
+            # loop through the decoder network until we reach EOS or max pred lengtht
             i = 0
-            while out_idx != EOS_idx and i <= self.max_pred_len:
+            while out_index != EOS_index and i <= self.max_pred_len:
                 i += 1
-                out_toks.append(self.output_indexer.get_object(out_idx.item()))
-                out_emb = self.output_embeddings.forward(out_idx).unsqueeze(0)
-                class_scores, dec_hid = self.decoder.forward(
-                    out_emb, torch.tensor(1).unsqueeze(0), dec_hid, enc_output_each_word)
-                dec_hid = (dec_hid[0].unsqueeze(0), dec_hid[1].unsqueeze(0))
-                out_idx = torch.max(class_scores, dim=1)[1]
-            preds.append([Derivation(test_data[idx], 1.0, out_toks)])
+                # append the outputt token from indexer 
+                output_tokens.append(self.output_indexer.get_object(out_index.item()))
+                # get the embedding representation
+                out_embedding_rep = self.output_embedding_layer.forward(out_index).unsqueeze(0)
+                # moving forward through the decoder network and getting both the hidden rep as a tuple and the output index
+                output, hidden = self.decoder.forward(out_embedding_rep, torch.tensor([1]), hidden)
+                hidden = (hidden[0].unsqueeze(0), hidden[1].unsqueeze(0))
+                out_index = torch.max(output, dim=1)[1]
+            preds.append([Derivation(test_data[index], 1.0, output_tokens)])
 
         return preds
         
@@ -218,87 +216,66 @@ def train_model_encdec(train_data: List[Example], test_data: List[Example], inpu
 
     # First create a model. Then loop over epochs, loop over examples, and given some indexed words, call
     # the encoder, call your decoder, accumulate losses, update parameters
-    # raise Exception("Implement the rest of me to train your encoder-decoder model")
-
 
     # Create model
-    model_input_emb = EmbeddingLayer(
-        200, len(input_indexer), 0.2)
-    model_enc = RNNEncoder(200, 400,\
-                          True)
-    model_output_emb = EmbeddingLayer(
-        200, len(output_indexer),0.2)
-    # Loop over epochs, loop over examples, given some indexed words, call encode_input_for_decoder, then call your
-    # decoder, accumulate losses, update parameters
-
-    # model_dec = DecoderCell(args.input_dim, args.hidden_size, len(output_indexer), dropout=0)
-    model_attn_dec = AttentionDecoderCell(
-        200, 400, len(output_indexer), input_max_len)
-
-    SOS_idx = torch.tensor(output_indexer.index_of("<SOS>")).unsqueeze(0)
-    EOS_idx = output_indexer.index_of("<EOS>")
-    num_examples = all_train_input_data.shape[0]
-
-
-    #params = list(model_dec.parameters()) + list(model_enc.parameters()) + list(model_input_emb.parameters()) + list(model_output_emb.parameters())
-    params = list(model_attn_dec.parameters()) + list(model_enc.parameters()) + \
-        list(model_input_emb.parameters()) + \
-        list(model_output_emb.parameters())
+    # dimensions are 200 for the embbeding layer 
+    input_embedding_layer = EmbeddingLayer(100, len(input_indexer), 0.2)
+    output_embedding_layer = EmbeddingLayer(100, len(output_indexer),0.2)
+    # dimensions are 400 for the encoder and decoder and takes in the 200 dimension embedding layer
+    encoder = RNNEncoder(100, 200, False)
+    decoder = DecoderCell(100, 200, len(output_indexer))
+    # getting the SOS and EOS index 
+    SOS_index = torch.tensor(output_indexer.index_of("<SOS>")).unsqueeze(0)
+    EOS_index = output_indexer.index_of("<EOS>")
+    # init the parameters, optimizer, and criterion for the training loop
+    params = list(decoder.parameters()) + list(encoder.parameters()) + list(input_embedding_layer.parameters()) + list(output_embedding_layer.parameters())
     optimizer = optim.Adam(params, lr=args.lr)
     criterion = nn.CrossEntropyLoss(ignore_index=0)
-
+    # loop over epochs 
     for epoch in range(args.epochs):
-        print("epoch:", epoch)
-
-        ex_indices = [i for i in range(num_examples)]
-        random.shuffle(ex_indices)
+        # get the indices of the examples then shuffle that list such that we get a random ordering for our examples
+        example_indices = [i for i in range(all_train_input_data.shape[0])]
+        random.shuffle(example_indices)
         loss = 0
         count = 0
-        for idx in ex_indices:
+        for index in example_indices:
+            # create a tensor that has gradient enabled to take derivatives
             loss = torch.zeros(1, dtype=torch.float64, requires_grad=True)
-            # model_dec.zero_grad()
-            model_attn_dec.zero_grad()
-            model_enc.zero_grad()
-            model_input_emb.zero_grad()
-            model_output_emb.zero_grad()
-
-            inp_ex = torch.tensor(all_train_input_data[idx]).unsqueeze(0)
-            inp_len = torch.tensor(
-                (np.array(len(train_data[idx].x_tok)))).unsqueeze(0)
-            gold_len = len(train_data[idx].y_indexed)
-            enc_output_each_word, enc_context_mask, enc_final_states = encode_input_for_decoder(
-                inp_ex, inp_len, model_input_emb, model_enc)
-
-            SOS_embed = model_output_emb.forward(SOS_idx).unsqueeze(0)
-            class_scores, dec_hid = model_attn_dec.forward(SOS_embed, torch.tensor(
-                1).unsqueeze(0), enc_final_states, enc_output_each_word)
-
-            for gold_idx in train_data[idx].y_indexed:
-                loss = loss + criterion(class_scores, torch.LongTensor([gold_idx]))
-
-                if gold_idx == EOS_idx:
+            # zero out the grad to update the param becasue PyTorch accumulates the gradients on subsequent backward passes
+            decoder.zero_grad()
+            encoder.zero_grad()
+            input_embedding_layer.zero_grad()
+            output_embedding_layer.zero_grad()
+            # creating the tensor of input tokens 
+            input_tokens = torch.tensor(all_train_input_data[index]).unsqueeze(0)
+            # tensor containing the length of each sentence in the batch
+            input_length = torch.tensor((np.array(len(train_data[index].x_tok)))).unsqueeze(0)
+            # using the encode_input_for_decoder to get the encoder outputs and the encoder final states which is the h and c tuple
+            encoded_output_each_word, _, encoder_final_states = encode_input_for_decoder(input_tokens, input_length, input_embedding_layer, encoder)
+            # getting the embedded form of the input words from the start of sentence index
+            SOS_embedded_rep = output_embedding_layer.forward(SOS_index).unsqueeze(0)
+            # getting the output and last hidden representation
+            output, hidden = decoder.forward(SOS_embedded_rep, torch.tensor([1]), encoder_final_states)
+            # From week 6, slide deck 2: "loop through until you reach a gold stopping point"
+            # in this case, our gold stopping point is the EOS token's index, loop over all the targets find the loss
+            for j in train_data[index].y_indexed:
+                # updating loss by adding the loss tensor with the Cross entropy loss of the output (class scores), a tensor containing the target
+                loss = loss + criterion(output, torch.tensor([j]).long())
+                # checking to see if the gold tag is found, if so breaking out of the loop
+                if j == EOS_index:
                     break
-                dec_hid = (dec_hid[0].unsqueeze(0), dec_hid[1].unsqueeze(0))
-                prev_idx = torch.max(class_scores, dim=1)[1]
-                inp_emb = model_output_emb.forward(
-                    torch.tensor(gold_idx).unsqueeze(0)).unsqueeze(0)
-                class_scores, dec_hid = model_attn_dec.forward(
-                    inp_emb, torch.tensor(1).unsqueeze(0), dec_hid, enc_output_each_word)
+                # get our hidden state tuple to pass to the next layer
+                hidden = (hidden[0].unsqueeze(0), hidden[1].unsqueeze(0))
+                # getting the embedded form of the i-th position of the loop
+                inp_embedding_rep = output_embedding_layer.forward(torch.tensor(j).unsqueeze(0)).unsqueeze(0)
+                # moving to the next state in the RNN 
+                output, hidden = decoder.forward(inp_embedding_rep, torch.tensor(1).unsqueeze(0), hidden)
             count+=1
             loss.backward()
             optimizer.step()
-        print('loss ' + str(loss/count))
-        # if epoch % 1 == 0:
-        #    oml = output_max_len*3
-        #    s=Seq2SeqSemanticParser(model_enc,model_attn_dec,model_input_emb,model_output_emb,input_indexer,output_indexer,args.reverse_input,oml)
-        #    exact, token_level, denotation =  evaluate(test_data, s)
-        #    with open('../NLP_ori.csv','a') as ooo:
-        #        writer = csv.writer(ooo,delimiter = ',')
-        #        writer.writerow([' ', epoch, exact, token_level, denotation])
-        #    if epoch >= 19 and denotation > 61:
-        #        return Seq2SeqSemanticParser(model_enc, model_attn_dec, model_input_emb, model_output_emb, input_indexer, output_indexer, args.reverse_input, output_max_len * 3)
+        print('Epoch: ' + str(epoch) + ' Loss: ' + str(loss/count))
 
-    return Seq2SeqSemanticParser(model_enc, model_attn_dec, model_input_emb, model_output_emb, input_indexer, output_indexer, True, output_max_len)
+    return Seq2SeqSemanticParser(encoder, decoder, input_embedding_layer, output_embedding_layer, input_indexer, output_indexer, output_max_len)
 
 
 

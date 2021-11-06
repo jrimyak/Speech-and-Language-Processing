@@ -134,7 +134,7 @@ class DecoderCell(nn.Module):
         nn.init.constant_(self.rnn.bias_hh_l0, 0)
         nn.init.constant_(self.rnn.bias_ih_l0, 0)
 
-    def forward(self, embedded_input, input_lens, hidden_input, enc_output_states):
+    def forward(self, embedded_input, input_lens, hidden_input):
         packed_embedding = nn.utils.rnn.pack_padded_sequence(embedded_input, input_lens, batch_first=True)
         output, hn  = self.rnn(packed_embedding, hidden_input)        
         h, c = hn[0][0], hn[1][0] 
@@ -200,6 +200,6 @@ class AttentionDecoderCell(nn.Module):
         ei = torch.mm(self.partial_f(h),enc_output_states.squeeze(1).t()) 
         ai = torch.softmax(ei,dim=1)
         ci = torch.mm(ai,enc_output_states.squeeze(1))
-        ci_nonlin= torch.tanh(torch.cat((c_i,h), dim=1))
+        ci_nonlin= torch.tanh(torch.cat((ci,h), dim=1))
         output = self.to_output(ci_nonlin)
-        return (output, h_t)
+        return (output, ht)
